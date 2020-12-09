@@ -858,7 +858,7 @@ class StructuredGrid(Grid):
             k = int(np.floor(node / ncpl))
             ij = int((node) - (ncpl * k))
             i = int(np.floor(ij / self.__ncol))
-            j = int((node) - (i * self.__ncol))
+            j = int(ij - (i * self.__ncol))
 
             v.append((k, i, j))
         return v
