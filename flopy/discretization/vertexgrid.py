@@ -262,6 +262,14 @@ class VertexGrid(Grid):
         Returns
         ------- list of x,y cell vertices
         """
+        while cellid >= self.ncpl:
+            if cellid > self.nnodes:
+                err = "cellid {} out of index for size {}".format(cellid,
+                                                                  self.nnodes)
+                raise IndexError(err)
+
+            cellid -= self.ncpl
+
         self._copy_cache = False
         cell_verts = list(zip(self.xvertices[cellid], self.yvertices[cellid]))
         self._copy_cache = True

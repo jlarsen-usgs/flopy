@@ -229,6 +229,10 @@ class StructuredGrid(Grid):
         return self.__ncol
 
     @property
+    def ncpl(self):
+        return self.__nrow * self.__ncol
+
+    @property
     def nnodes(self):
         return self.__nlay * self.__nrow * self.__ncol
 
@@ -800,15 +804,32 @@ class StructuredGrid(Grid):
             vrts = np.array(pts).transpose([2, 0, 1])
             return [v.tolist() for v in vrts]
 
-    def get_cell_vertices(self, i, j):
+    def get_cell_vertices(self, *args, **kwargs):
         """
         Method to get a set of cell vertices for a single cell
             used in the Shapefile export utilities
+        :param node: (int) node number
         :param i: (int) cell row number
         :param j: (int) cell column number
         Returns
         ------- list of x,y cell vertices
         """
+        nn = None
+        if len(args) == 1:
+            nn = args[0]
+        else:
+            i, j = args[0:2]
+
+        if kwargs:
+            if 'node' in kwargs:
+                nn = kwargs.pop('node')
+            else:
+                i = kwargs.pop('i')
+                j = kwargs.pop('j')
+
+        if nn is not None:
+            k, i, j = self.get_lrc(nn)[0]
+
         self._copy_cache = False
         cell_verts = [
             (self.xvertices[i, j], self.yvertices[i, j]),
@@ -818,6 +839,48 @@ class StructuredGrid(Grid):
         ]
         self._copy_cache = True
         return cell_verts
+
+    def get_lrc(self, nodes):
+        """
+        Get layer, row, column from a list of zero based
+        MODFLOW node numbers.
+
+        Returns
+        -------
+        v : list of tuples containing the layer (k), row (i),
+            and column (j) for each node in the input list
+        """
+        if not isinstance(nodes, list):
+            nodes = [nodes]
+        ncpl = self.ncpl
+        v = []
+        for node in nodes:
+            k = int(np.floor(node / ncpl))
+            ij = int((node) - (ncpl * k))
+            i = int(np.floor(ij / self.__ncol))
+            j = int((node) - (i * self.__ncol))
+
+            v.append((k, i, j))
+        return v
+
+    def get_node(self, lrc_list):
+        """
+        Get node number from a list of zero based MODFLOW
+        layer, row, column tuples.
+
+        Returns
+        -------
+        v : list of MODFLOW nodes for each layer (k), row (i),
+            and column (j) tuple in the input list
+        """
+        if not isinstance(lrc_list, list):
+            lrc_list = [lrc_list]
+        nrc = self.__nrow * self.__ncol
+        v = []
+        for [k, i, j] in lrc_list:
+            node = int(((k) * nrc) + ((i) * self.__ncol) + j)
+            v.append(node)
+        return v
 
     def plot(self, **kwargs):
         """

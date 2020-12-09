@@ -290,6 +290,10 @@ class Grid(object):
         return copy.deepcopy(self._idomain)
 
     @property
+    def ncpl(self):
+        raise NotImplementedError("must define ncpl in child class")
+
+    @property
     def nnodes(self):
         raise NotImplementedError("must define nnodes in child class")
 

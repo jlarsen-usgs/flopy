@@ -111,16 +111,12 @@ class PlotMapView(object):
 
         """
 
-        if self.mg.grid_type not in ("structured", "vertex", "unstructured"):
-            raise TypeError(
-                "Unrecognized grid type {}".format(self.mg.grid_type)
-            )
-
         if not isinstance(a, np.ndarray):
             a = np.array(a)
 
         # Use the model grid to pass back an array of the correct shape
         plotarray = self.mg.get_plottable_layer_array(a, self.layer)
+        plotarray = plotarray.ravel()
 
         # if masked_values are provided mask the plotting array
         if masked_values is not None:
@@ -135,20 +131,22 @@ class PlotMapView(object):
         else:
             ax = self.ax
 
-        # Get vertices for the selected layer
-        xgrid = self.mg.get_xvertices_for_layer(self.layer)
-        ygrid = self.mg.get_yvertices_for_layer(self.layer)
+        # Get calculate node numbers and compile vertices for layer
+        ncpl = self.mg.ncpl
+        if isinstance(ncpl, (tuple, list, np.ndarray)):
+            ncpl = int(ncpl[self.layer])
 
-        if self.mg.grid_type == "structured":
-            quadmesh = ax.pcolormesh(xgrid, ygrid, plotarray)
-        else:
-            # use patch collection for vertex and unstructured
-            patches = [
-                Polygon(list(zip(xgrid[i], ygrid[i])), closed=True)
-                for i in range(xgrid.shape[0])
-            ]
-            quadmesh = PatchCollection(patches)
-            quadmesh.set_array(plotarray)
+        strt_node = ncpl * self.layer
+        end_node = strt_node + ncpl
+
+        # use patch collection for plotting
+        patches = [
+            Polygon(self.mg.get_cell_vertices(nn), closed=True)
+            for nn in range(strt_node, end_node)
+        ]
+
+        collection = PatchCollection(patches)
+        collection.set_array(plotarray)
 
         # set max and min
         if "vmin" in kwargs:
@@ -162,18 +160,18 @@ class PlotMapView(object):
             vmax = None
 
         # limit the color range
-        quadmesh.set_clim(vmin=vmin, vmax=vmax)
+        collection.set_clim(vmin=vmin, vmax=vmax)
 
         # send rest of kwargs to quadmesh
-        quadmesh.set(**kwargs)
+        collection.set(**kwargs)
 
         # add collection to axis
-        ax.add_collection(quadmesh)
+        ax.add_collection(collection)
 
         # set limits
         ax.set_xlim(self.extent[0], self.extent[1])
         ax.set_ylim(self.extent[2], self.extent[3])
-        return quadmesh
+        return collection
 
     def contour_array(self, a, masked_values=None, **kwargs):
         """
@@ -311,9 +309,6 @@ class PlotMapView(object):
         quadmesh : matplotlib.collections.QuadMesh
 
         """
-        if plt is None:
-            err_msg = "matplotlib must be installed to use plot_inactive()"
-            raise ImportError(err_msg)
 
         if ibound is None:
             if self.mg.idomain is None:
@@ -359,9 +354,6 @@ class PlotMapView(object):
         quadmesh : matplotlib.collections.QuadMesh
 
         """
-        if plt is None:
-            err_msg = "matplotlib must be installed to use plot_ibound()"
-            raise ImportError(err_msg)
 
         if ibound is None:
             if self.model is not None:
@@ -399,11 +391,8 @@ class PlotMapView(object):
         lc : matplotlib.collections.LineCollection
 
         """
-        if plt is None:
-            err_msg = "matplotlib must be installed to use plot_grid()"
-            raise ImportError(err_msg)
-        else:
-            from matplotlib.collections import LineCollection
+
+        from matplotlib.collections import LineCollection
 
         if "ax" in kwargs:
             ax = kwargs.pop("ax")
@@ -745,16 +734,16 @@ class PlotMapView(object):
             ax = self.ax
 
         # get actual values to plot
-        if self.mg.grid_type == "structured":
+        try:
             x = self.mg.xcellcenters[::istep, ::jstep]
             y = self.mg.ycellcenters[::istep, ::jstep]
             u = vx[self.layer, ::istep, ::jstep]
             v = vy[self.layer, ::istep, ::jstep]
-        else:
-            x = self.mg.xcellcenters[::istep]
-            y = self.mg.ycellcenters[::istep]
-            u = vx[self.layer, ::istep]
-            v = vy[self.layer, ::istep]
+        except IndexError:
+            x = self.mg.xcellcenters[::jstep]
+            y = self.mg.ycellcenters[::jstep]
+            u = vx[self.layer, ::jstep]
+            v = vy[self.layer, ::jstep]
 
         # if necessary, copy to avoid changing the passed values
         if masked_values is not None or normalize:
@@ -1049,11 +1038,8 @@ class PlotMapView(object):
         lc : matplotlib.collections.LineCollection
 
         """
-        if plt is None:
-            err_msg = "matplotlib must be installed to use plot_pathline()"
-            raise ImportError(err_msg)
-        else:
-            from matplotlib.collections import LineCollection
+
+        from matplotlib.collections import LineCollection
 
         # make sure pathlines is a list
         if not isinstance(pl, list):
@@ -1210,9 +1196,6 @@ class PlotMapView(object):
         -------
             lo : list of Line2D objects
         """
-        if plt is None:
-            err_msg = "matplotlib must be installed to use plot_timeseries()"
-            raise ImportError(err_msg)
 
         # make sure timeseries is a list
         if not isinstance(ts, list):
@@ -1353,9 +1336,6 @@ class PlotMapView(object):
         sp : matplotlib.pyplot.scatter
 
         """
-        if plt is None:
-            err_msg = "matplotlib must be installed to use plot_endpoint()"
-            raise ImportError(err_msg)
 
         ep = ep.copy()
         direction = direction.lower()
