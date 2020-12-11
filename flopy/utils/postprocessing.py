@@ -177,8 +177,8 @@ def get_saturated_thickness(heads, m, nodata, per_idx=None):
         Heads array.
     m : flopy.modflow.Modflow object
         Must have a flopy.modflow.ModflowDis object attached.
-    nodata : real
-        HDRY value indicating dry cells.
+    nodata : float, list
+        HDRY value indicating dry cells and/or HNOFLO values.
     per_idx : int or sequence of ints
         stress periods to return. If None,
         returns all stress periods (default).
@@ -188,9 +188,17 @@ def get_saturated_thickness(heads, m, nodata, per_idx=None):
     sat_thickness : 3 or 4-D np.ndarray
         Array of saturated thickness
     """
-    # internal calculations done on a masked array
-    heads = np.ma.array(heads, ndmin=4, mask=heads == nodata)
+
+    if not isinstance(nodata, list):
+        nodata = [nodata]
+    heads = np.array(heads, ndmin=4)
+    for mv in nodata:
+        heads[heads == mv] = np.nan
+
+    top = m.dis.top.array
     botm = m.dis.botm.array
+    top.shape = (1,) + botm.shape[1:]
+    top = np.concatenate((top, botm[0:-1]), axis=0)
     thickness = m.dis.thickness.array
     nper, nlay, nrow, ncol = heads.shape
     if per_idx is None:
@@ -199,38 +207,25 @@ def get_saturated_thickness(heads, m, nodata, per_idx=None):
         per_idx = [per_idx]
 
     # get confined or unconfined/convertible info
-    if m.has_package("BCF6") or m.has_package("LPF") or m.has_package("UPW"):
-        if m.has_package("BCF6"):
-            laytyp = m.lpf.laycon.array
-        elif m.has_package("LPF"):
-            laytyp = m.lpf.laytyp.array
-        else:
-            laytyp = m.upw.laytyp.array
-        if len(laytyp) == 1:
-            is_conf = np.full(m.modelgrid.shape, laytyp == 0)
-        else:
-            laytyp = laytyp.reshape(m.modelgrid.nlay, 1, 1)
-            is_conf = np.logical_and(
-                (laytyp == 0), np.full(m.modelgrid.shape, True)
-            )
-    elif m.has_package("NPF"):
-        is_conf = m.npf.icelltype.array == 0
-    else:
-        raise ValueError(
-            "No flow package was found when trying to determine "
-            "the layer type."
+    laytyp = m.laytyp
+    if len(laytyp.shape) == 1:
+        laytyp.shape = (m.nlay, 1, 1)
+        is_conf = np.logical_and(
+            (laytyp == 0), np.full(m.modelgrid.shape, True)
         )
+    else:
+        is_conf = laytyp == 0
 
     # calculate saturated thickness
     sat_thickness = []
     for per in per_idx:
         hds = heads[per]
-        perthickness = hds - botm
-        conf = np.logical_or(perthickness > thickness, is_conf)
-        perthickness[conf] = thickness[conf]
-        # convert to nan-filled array, as is expected(!?)
-        sat_thickness.append(perthickness.filled(np.nan))
-    return np.squeeze(sat_thickness)
+        unconf_thickness = np.where((hds - botm) > top, top, hds - botm)
+        perthickness = np.where(is_conf, thickness, unconf_thickness)
+        sat_thickness.append(perthickness)
+    sat_thickness = np.squeeze(sat_thickness)
+
+    return sat_thickness
 
 
 def get_gradients(heads, m, nodata, per_idx=None):
@@ -344,9 +339,13 @@ def get_extended_budget(
         that the z axis is considered to increase in the upward direction.
     """
     import flopy.utils.binaryfile as bf
+    import flopy.utils.formattedfile as fm
 
     # define useful stuff
-    cbf = bf.CellBudgetFile(cbcfile, precision=precision)
+    if isinstance(cbcfile, bf.CellBudgetFile):
+        cbf = cbcfile
+    else:
+        cbf = bf.CellBudgetFile(cbcfile)
     nlay, nrow, ncol = cbf.nlay, cbf.nrow, cbf.ncol
     rec_names = cbf.get_unique_record_names(decode=True)
     err_msg = " not found in the budget file."
@@ -418,7 +417,13 @@ def get_extended_budget(
             raise ValueError(
                 "hdsfile must be provided when using " "boundary_ifaces"
             )
-        hds = bf.HeadFile(hdsfile, precision=precision)
+        if isinstance(hdsfile, (bf.HeadFile, fm.FormattedHeadFile)):
+            hds = hdsfile
+        else:
+            try:
+                hds = bf.HeadFile(hdsfile)
+            except:
+                hds = fm.FormattedHeadFile(hdsfile, precision=precision)
         head = hds.get_data(idx=idx, kstpkper=kstpkper, totim=totim)
 
         # get hnoflo and hdry values
@@ -619,7 +624,7 @@ def get_specific_discharge(
     ----------
     model : flopy.modflow.Modflow object
         Modflow model instance.
-    cbcfile : str
+    cbcfile : str or CellBudgetFile object
         Cell by cell file produced by Modflow.
     precision : str
         Binary file precision, default is 'single'.
@@ -651,7 +656,7 @@ def get_specific_discharge(
         'HEAD DEP BOUNDS': [[lay, row, col, head, cond, iface], ...]}.
         Note: stresses that are not informed in boundary_ifaces are implicitly
         treated as internally-distributed sinks/sources.
-    hdsfile : str
+    hdsfile : str, HeadFile object, or FormattedHeadFile object
         Head file produced by MODFLOW. Head is used to calculate saturated
         thickness and to determine if a cell is inactive or dry. If not
         provided, all cells are considered fully saturated.
@@ -675,9 +680,13 @@ def get_specific_discharge(
         Note: if hdsfile is provided, inactive and dry cells are set to NaN.
     """
     import flopy.utils.binaryfile as bf
+    import flopy.utils.formattedfile as fm
 
     # check if budget file has classical budget terms
-    cbf = bf.CellBudgetFile(cbcfile, precision=precision)
+    if isinstance(cbcfile, bf.CellBudgetFile):
+        cbf = cbcfile
+    else:
+        cbf = bf.CellBudgetFile(cbcfile)
     rec_names = cbf.get_unique_record_names(decode=True)
     classical_budget_terms = [
         "FLOW RIGHT FACE",
@@ -692,7 +701,13 @@ def get_specific_discharge(
             break
 
     if hdsfile is not None:
-        hds = bf.HeadFile(hdsfile, precision=precision)
+        if isinstance(hdsfile, (bf.HeadFile, fm.FormattedHeadFile)):
+            hds = hdsfile
+        else:
+            try:
+                hds = bf.HeadFile(hdsfile)
+            except:
+                hds = fm.FormattedHeadFile(hdsfile, precision=precision)
         head = hds.get_data(idx=idx, kstpkper=kstpkper, totim=totim)
 
     if classical_budget:
@@ -712,8 +727,9 @@ def get_specific_discharge(
         if hdsfile is None:
             sat_thk = model.dis.thickness.array
         else:
-            sat_thk = get_saturated_thickness(head, model, model.hdry)
-            sat_thk = sat_thk.reshape(model.modelgrid.shape)
+            sat_thk = get_saturated_thickness(head, model, [model.hdry,
+                                                            model.hnoflo])
+            sat_thk.shape = model.modelgrid.shape
 
         # inform modelgrid of no-flow and dry cells
         modelgrid = model.modelgrid
@@ -738,11 +754,17 @@ def get_specific_discharge(
         # get cross section areas along z
         cross_area_z = np.ones(modelgrid.shape) * delc * delr
 
+        # todo: strip out current saturated thickness calcucation,
+        #   and then remove the centers calculation and replace with
+        #   centered specific discharge. Current implementation is
+        #   not correct....
+
         # calculate qx, qy, qz
         if position == "centers":
             qx = 0.5 * (Qx_ext[:, :, 1:] + Qx_ext[:, :, :-1]) / cross_area_x
             qy = 0.5 * (Qy_ext[:, 1:, :] + Qy_ext[:, :-1, :]) / cross_area_y
             qz = 0.5 * (Qz_ext[1:, :, :] + Qz_ext[:-1, :, :]) / cross_area_z
+
         elif position == "faces" or position == "vertices":
             cross_area_x = modelgrid.array_at_faces(cross_area_x, "x")
             cross_area_y = modelgrid.array_at_faces(cross_area_y, "y")
