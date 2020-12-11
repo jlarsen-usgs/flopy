@@ -754,15 +754,18 @@ def get_specific_discharge(
         # get cross section areas along z
         cross_area_z = np.ones(modelgrid.shape) * delc * delr
 
-        # todo: strip out current saturated thickness calcucation,
-        #   and then remove the centers calculation and replace with
-        #   centered specific discharge. Current implementation is
-        #   not correct....
-
         # calculate qx, qy, qz
         if position == "centers":
-            qx = 0.5 * (Qx_ext[:, :, 1:] + Qx_ext[:, :, :-1]) / cross_area_x
-            qy = 0.5 * (Qy_ext[:, 1:, :] + Qy_ext[:, :-1, :]) / cross_area_y
+            qx = np.zeros(modelgrid.shape)
+            qy = np.zeros(modelgrid.shape)
+            cross_area_x = delc[:] * 0.5 * \
+                           (sat_thk[:, :, :-1] + sat_thk[:, :, 1:])
+            cross_area_y = delr * 0.5 * \
+                           (sat_thk[:, 1:, :] + sat_thk[:, :-1, :])
+            qx[:, :, 1:] = 0.5 * (Qx_ext[:, :, 2:] + Qx_ext[:, :, 1:-1]) / cross_area_x
+            qx[:, :, 0] = 0.5 * Qx_ext[:, :, 1] / cross_area_x[:, :, 0]
+            qy[:, 1:, :] = 0.5 * (Qy_ext[:, 2:, :] + Qy_ext[:, 1:-1, :]) / cross_area_y
+            qy[:, 0, :] = 0.5 * Qy_ext[:, 1, :] / cross_area_y[:, 0, :]
             qz = 0.5 * (Qz_ext[1:, :, :] + Qz_ext[:-1, :, :]) / cross_area_z
 
         elif position == "faces" or position == "vertices":
