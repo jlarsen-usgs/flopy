@@ -54,12 +54,15 @@ class ZCrossSection(object):
         if self.mg.top is None or self.mg.botm is None:
             raise AssertionError("modelgrid top and botm must be defined")
 
-        linekeys = [linekeys.lower() for linekeys in list(line.keys())]
+        if not isinstance(line, dict):
+            raise AssertionError("A line dictionary must be provided")
 
-        if len(linekeys) != 1:
+        line = {k.lower(): v for k, v in line.items()}
+
+        if len(line) != 1:
             s = "only row, column, or line can be specified in line dictionary.\n"
             s += "keys specified: "
-            for k in linekeys:
+            for k in line.keys():
                 s += "{} ".format(k)
             raise AssertionError(s)
 
@@ -81,28 +84,19 @@ class ZCrossSection(object):
             inverse=True,
         )
 
-        try:
-            self.xvertices, self.yvertices = geometry.transform(
-                self.mg.xvertices,
-                self.mg.yvertices,
-                self.mg.xoffset,
-                self.mg.yoffset,
-                self.mg.angrot_radians,
-                inverse=True)
+        xverts, yverts = self.mg.cross_section_vertices
 
-        except ValueError:
-            # irregular shapes in vertex grid ie. squares and triangles
-            xverts, yverts = \
-                plotutil.UnstructuredPlotUtilities.irregular_shape_patch(
-                self.mg.xvertices, self.mg.yvertices)
+        xverts, yverts = \
+            plotutil.UnstructuredPlotUtilities.irregular_shape_patch(
+            xverts, yverts)
 
-            self.xvertices, self.yvertices = geometry.transform(
-                xverts,
-                yverts,
-                self.mg.xoffset,
-                self.mg.yoffset,
-                self.mg.angrot_radians,
-                inverse=True)
+        self.xvertices, self.yvertices = geometry.transform(
+            xverts,
+            yverts,
+            self.mg.xoffset,
+            self.mg.yoffset,
+            self.mg.angrot_radians,
+            inverse=True)
 
         if onkey in ('row', 'column'):
             eps = 1.0e-4
@@ -110,14 +104,14 @@ class ZCrossSection(object):
             if onkey == 'row':
                 ycenter = self.ycellcenters.T[0]
                 pts = [
-                    (xedge[0] + eps, ycenter[int(line[onkey])] - eps),
-                    (xedge[-1] - eps, ycenter[int(line[onkey])] + eps),
+                    (xedge[0] - eps, ycenter[int(line[onkey])]),
+                    (xedge[-1] + eps, ycenter[int(line[onkey])]),
                 ]
             else:
                 xcenter = self.xcellcenters[0, :]
                 pts = [
-                    (xcenter[int(line[onkey])] + eps, yedge[0] - eps),
-                    (xcenter[int(line[onkey])] - eps, yedge[-1] + eps),
+                    (xcenter[int(line[onkey])], yedge[0] + eps),
+                    (xcenter[int(line[onkey])], yedge[-1] - eps),
                 ]
         else:
             verts = line[onkey]
@@ -159,9 +153,9 @@ class ZCrossSection(object):
 
             self.xypts = xypts
 
-        top = self.mg.top
-        top.shape = (1,) + top.shape[1:]
-        botm = self.mg.botm
+
+        top = self.mg.top.reshape(1, self.mg.ncpl)
+        botm = self.mg.botm.reshape(self.mg.nlay, self.mg.ncpl)
 
         self.elev = np.concatenate((top, botm), axis=0)
 
@@ -183,6 +177,7 @@ class ZCrossSection(object):
             self.direction = "y"
 
         # make vertex array based on projection direction
+        # todo: need to think about how to flag unstructured grids...
         self.projpts = self.set_zpts(None)
 
         # Create cross-section extent
@@ -382,6 +377,77 @@ class ZCrossSection(object):
             norm=norm,
             **kwargs
         )
+        return patches
+
+    def plot_grid(self, **kwargs):
+        """
+        Plot the grid lines.
+
+        Parameters
+        ----------
+            kwargs : ax, colors.  The remaining kwargs are passed into the
+                the LineCollection constructor.
+
+        Returns
+        -------
+            lc : matplotlib.collections.LineCollection
+
+        """
+        if "ax" in kwargs:
+            ax = kwargs.pop("ax")
+        else:
+            ax = self.ax
+
+        col = self.get_grid_line_collection(**kwargs)
+        if col is not None:
+            ax.add_collection(col)
+            ax.set_xlim(self.extent[0], self.extent[1])
+            ax.set_ylim(self.extent[2], self.extent[3])
+
+        return col
+
+    def get_grid_line_collection(self, **kwargs):
+        """
+        Get a LineCollection of the grid
+
+        Parameters
+        ----------
+        **kwargs : dictionary
+            keyword arguments passed to matplotlib.collections.LineCollection
+
+        Returns
+        -------
+        linecollection : matplotlib.collections.LineCollection
+        """
+        if plt is None:
+            err_msg = (
+                "matplotlib must be installed to "
+                + "use get_grid_line_collection()"
+            )
+            raise ImportError(err_msg)
+        else:
+            from matplotlib.patches import Polygon
+            from matplotlib.collections import PatchCollection
+
+        color = "grey"
+        if "ec" in kwargs:
+            color = kwargs.pop("ec")
+        if color in kwargs:
+            color = kwargs.pop("color")
+
+        rectcol = []
+        for _, verts in sorted(self.projpts.items()):
+            verts = plotutil.UnstructuredPlotUtilities.arctan2(np.array(verts))
+
+            rectcol.append(Polygon(verts, closed=True))
+
+        if len(rectcol) > 0:
+            patches = PatchCollection(
+                rectcol, edgecolor=color, facecolor="none", **kwargs
+            )
+        else:
+            patches = None
+
         return patches
 
     def set_zpts(self, vs):

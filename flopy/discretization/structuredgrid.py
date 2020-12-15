@@ -807,7 +807,7 @@ class StructuredGrid(Grid):
     def get_cell_vertices(self, *args, **kwargs):
         """
         Method to get a set of cell vertices for a single cell
-            used in the Shapefile export utilities
+            used in the Shapefile export utilities and plotting code
         :param node: (int) node number
         :param i: (int) cell row number
         :param j: (int) cell column number
@@ -1433,6 +1433,36 @@ class StructuredGrid(Grid):
 
         return afaces
 
+    @property
+    def cross_section_vertices(self):
+        """
+        Get a set of xvertices and yvertices ordered by node
+        for plotting cross sections
+
+        Returns
+        -------
+            xverts, yverts: (np.ndarray, np.ndarray)
+
+        """
+        xv = self.xyzvertices[0]
+        yv = self.xyzvertices[1]
+
+        xverts, yverts = [], []
+        for i in range(self.nrow):
+            for j in range(self.ncol):
+                xverts.append([xv[i, j],
+                               xv[i + 1, j],
+                               xv[i + 1, j + 1],
+                               xv[i, j + 1],
+                               xv[i, j]])
+                yverts.append([yv[i, j],
+                               yv[i + 1, j],
+                               yv[i + 1, j + 1],
+                               yv[i, j + 1],
+                               yv[i, j]])
+
+        return np.array(xverts), np.array(yverts)
+
     def get_number_plottable_layers(self, a):
         """
         Calculate and return the number of 2d plottable arrays that can be
@@ -1477,28 +1507,3 @@ class StructuredGrid(Grid):
         msg = "{} /= {}".format(plotarray.shape, required_shape)
         assert plotarray.shape == required_shape, msg
         return plotarray
-
-
-if __name__ == "__main__":
-    delc = np.ones((10,)) * 1
-    delr = np.ones((20,)) * 1
-
-    top = np.ones((10, 20)) * 2000
-    botm = np.ones((1, 10, 20)) * 1100
-
-    t = StructuredGrid(delc, delr, top, botm, xoff=0, yoff=0, angrot=45)
-
-    t.use_ref_coords = False
-    x = t.xvertices
-    y = t.yvertices
-    xc = t.xcellcenters
-    yc = t.ycellcenters
-    grid = t.grid_lines
-
-    t.use_ref_coords = True
-    sr_x = t.xvertices
-    sr_y = t.yvertices
-    sr_xc = t.xcellcenters
-    sr_yc = t.ycellcenters
-    sr_grid = t.grid_lines
-    print(sr_grid)

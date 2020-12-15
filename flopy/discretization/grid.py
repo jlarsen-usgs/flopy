@@ -376,6 +376,9 @@ class Grid(object):
     #    raise NotImplementedError(
     #        'must define indices in child '
     #        'class to use this base class')
+    @property
+    def cross_section_vertices(self):
+        return self.xyzvertices[0], self.xyzvertices[1]
 
     def get_plottable_layer_array(self, plotarray, layer):
         raise NotImplementedError(
