@@ -3,11 +3,13 @@ import numpy as np
 try:
     import matplotlib.pyplot as plt
     import matplotlib.colors
+    from matplotlib.patches import Polygon
 except:
     plt = None
 
 from flopy.plot import plotutil
 from flopy.utils import geometry
+import copy
 import warnings
 
 
@@ -177,7 +179,6 @@ class ZCrossSection(object):
             self.direction = "y"
 
         # make vertex array based on projection direction
-        # todo: need to think about how to flag unstructured grids...
         self.projpts = self.set_zpts(None)
 
         # Create cross-section extent
@@ -189,6 +190,7 @@ class ZCrossSection(object):
         self.layer0 = None
         self.layer1 = None
 
+        # todo: might be able to remove this at some point...
         self.d = {
             i: (np.min(np.array(v).T[0]), np.max(np.array(v).T[0]))
             for i, v in sorted(self.projpts.items())
@@ -203,10 +205,30 @@ class ZCrossSection(object):
         self.zcentergrid = None
         self.geographic_xcentergrid = None
         self.geographic_xpts = None
+        self._polygons = {}
 
         # Set axis limits
         self.ax.set_xlim(self.extent[0], self.extent[1])
         self.ax.set_ylim(self.extent[2], self.extent[3])
+
+    @property
+    def polygons(self):
+        """
+        Method to return cached matplotlib polygons for a cross
+        section
+
+        Returns
+        -------
+            dict : [matplotlib.patches.Polygon]
+        """
+        if not self._polygons:
+            for cell, verts in self.projpts.items():
+                verts = \
+                    plotutil.UnstructuredPlotUtilities.arctan2(np.array(verts))
+
+                self._polygons[cell] = Polygon(verts, closed=True)
+
+        return copy.copy(self._polygons)
 
     def get_extent(self):
         """
@@ -269,9 +291,9 @@ class ZCrossSection(object):
         if isinstance(head, np.ndarray):
             projpts = self.set_zpts(np.ravel(head))
         else:
-            projpts = self.projpts
+            projpts = None
 
-        pc = self.get_grid_patch_collection(projpts, a, **kwargs)
+        pc = self.get_grid_patch_collection(a, projpts, **kwargs)
         if pc is not None:
             ax.add_collection(pc)
             ax.set_xlim(self.extent[0], self.extent[1])
@@ -435,15 +457,10 @@ class ZCrossSection(object):
         if color in kwargs:
             color = kwargs.pop("color")
 
-        rectcol = []
-        for _, verts in sorted(self.projpts.items()):
-            verts = plotutil.UnstructuredPlotUtilities.arctan2(np.array(verts))
-
-            rectcol.append(Polygon(verts, closed=True))
-
-        if len(rectcol) > 0:
+        polygons = [p for _, p in sorted(self.polygons.items())]
+        if len(polygons) > 0:
             patches = PatchCollection(
-                rectcol, edgecolor=color, facecolor="none", **kwargs
+                polygons, edgecolor=color, facecolor="none", **kwargs
             )
         else:
             patches = None
@@ -477,7 +494,12 @@ class ZCrossSection(object):
             xyix = -1
 
         projpts = {}
-        for k in range(1, self.mg.nlay + 1):
+
+        nlay = 1
+        if len(self.xvertices) != self.mg.nnodes:
+            nlay = self.mg.nlay
+
+        for k in range(1, nlay + 1):
             top = self.elev[k - 1, :]
             botm = self.elev[k, :]
             adjnn = (k - 1) * self.mg.ncpl
@@ -514,17 +536,17 @@ class ZCrossSection(object):
 
         return projpts
 
-    @classmethod
-    def get_grid_patch_collection(cls, projpts, plotarray, **kwargs):
+    def get_grid_patch_collection(self, plotarray, projpts=None, **kwargs):
         """
         Get a PatchCollection of plotarray in unmasked cells
 
         Parameters
         ----------
-        projpts : dict
-            dictionary defined by node number which contains model patch vertices.
         plotarray : numpy.ndarray
             One-dimensional array to attach to the Patch Collection.
+         projpts : dict
+            dictionary defined by node number which contains model
+            patch vertices.
         **kwargs : dictionary
             keyword arguments passed to matplotlib.collections.PatchCollection
 
@@ -533,7 +555,11 @@ class ZCrossSection(object):
         patches : matplotlib.collections.PatchCollection
 
         """
-        # todo: create a caching method for these
+        use_cache = False
+        if projpts is None:
+            use_cache = True
+            projpts = self.polygons
+
         if plt is None:
             err_msg = (
                     "matplotlib must be installed to "
@@ -555,15 +581,20 @@ class ZCrossSection(object):
 
         rectcol = []
         data = []
-        for cell, verts in sorted(projpts.items()):
-            verts = plotutil.UnstructuredPlotUtilities.arctan2(np.array(verts))
+        for cell, poly in sorted(projpts.items()):
+            if not use_cache:
+                poly = \
+                    plotutil.UnstructuredPlotUtilities.arctan2(np.array(poly))
 
             if np.isnan(plotarray[cell]):
                 continue
             elif plotarray[cell] is np.ma.masked:
                 continue
 
-            rectcol.append(Polygon(verts, closed=True))
+            if use_cache:
+                rectcol.append(poly)
+            else:
+                rectcol.append(Polygon(poly, closed=True))
             data.append(plotarray[cell])
 
         if len(rectcol) > 0:
