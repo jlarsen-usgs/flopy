@@ -341,12 +341,21 @@ class ZCrossSection(object):
         xcenters = self.xcenters
         plotarray = np.array([a[cell] for cell in sorted(self.projpts)])
 
-        # todo: update for head array
-        if self.mg.nlay == 1:
+        if self.mg.nlay == 1 and not isinstance(self.mg.ncpl, np.ndarray):
             zcenters = []
-            for ev in self.elev:
-                ev = ev.ravel()
-                zc = [ev[i] for i in sorted(self.projpts)]
+            if isinstance(head, np.ndarray):
+                head = head.reshape(1, self.mg.ncpl)
+                head = np.vstack((head, head))
+            else:
+                head = self.elev.reshape(2, self.mg.ncpl)
+
+            elev = self.elev.reshape(2, self.mg.ncpl)
+            for k, ev in enumerate(elev):
+                if k == 0:
+                    zc = [ev[i] if head[k][i] > ev[i] else head[k][i]
+                          for i in sorted(self.projpts)]
+                else:
+                    zc = [ev[i] for i in sorted(self.projpts)]
                 zcenters.append(zc)
 
             plotarray = np.vstack((plotarray, plotarray))
@@ -375,7 +384,7 @@ class ZCrossSection(object):
                 vmax = kwargs.pop("vmax")
 
             levels = np.linspace(vmin, vmax, 7)
-            # kwargs["levels"] = levels
+            kwargs["levels"] = levels
 
         # workaround for tri-contour nan issue
         plotarray[np.isnan(plotarray)] = -(2 ** 31)
@@ -412,7 +421,7 @@ class ZCrossSection(object):
             xcenters = xcenters[idx].flatten()
             zcenters = zcenters[idx].flatten()
 
-        if self.mg.nlay == 1:
+        if self.mg.nlay == 1 and not isinstance(self.mg.ncpl, np.ndarray):
             plotarray = np.ma.masked_array(plotarray, ismasked)
             contour_set = ax.contour(xcenters, zcenters, plotarray, **kwargs)
         else:
