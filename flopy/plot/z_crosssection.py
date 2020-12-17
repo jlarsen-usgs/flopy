@@ -77,7 +77,7 @@ class ZCrossSection(object):
         self.__geographic_xpts = None
 
         # un-translate model grid into model coordinates
-        self.xcellcenters, self.ycellcenters = geometry.transform(
+        xcellcenters, ycellcenters = geometry.transform(
             self.mg.xcellcenters,
             self.mg.ycellcenters,
             self.mg.xoffset,
@@ -104,13 +104,13 @@ class ZCrossSection(object):
             eps = 1.0e-4
             xedge, yedge = self.mg.xyedges
             if onkey == 'row':
-                ycenter = self.ycellcenters.T[0]
+                ycenter = ycellcenters.T[0]
                 pts = [
                     (xedge[0] - eps, ycenter[int(line[onkey])]),
                     (xedge[-1] + eps, ycenter[int(line[onkey])]),
                 ]
             else:
-                xcenter = self.xcellcenters[0, :]
+                xcenter = xcellcenters[0, :]
                 pts = [
                     (xcenter[int(line[onkey])], yedge[0] + eps),
                     (xcenter[int(line[onkey])], yedge[-1] - eps),
@@ -196,15 +196,11 @@ class ZCrossSection(object):
             for i, v in sorted(self.projpts.items())
         }
 
-        self.xpts = None
-        self.active = None
-        self.ncb = None
-        self.laycbd = None
-        self.zpts = None
-        self.xcentergrid = None
-        self.zcentergrid = None
-        self.geographic_xcentergrid = None
-        self.geographic_xpts = None
+        # this is actually x or y based on projection
+        self.xcenters = [
+            np.mean(np.array(v).T[0]) for i, v in sorted(self.projpts.items())
+        ]
+
         self._polygons = {}
 
         # Set axis limits
@@ -300,6 +296,144 @@ class ZCrossSection(object):
             ax.set_ylim(self.extent[2], self.extent[3])
 
         return pc
+
+    def contour_array(self, a, masked_values=None, head=None, **kwargs):
+        """
+        Contour a two-dimensional array.
+
+        Parameters
+        ----------
+        a : numpy.ndarray
+            Three-dimensional array to plot.
+        masked_values : iterable of floats, ints
+            Values to mask.
+        head : numpy.ndarray
+            Three-dimensional array to set top of patches to the minimum
+            of the top of a layer or the head value. Used to create
+            patches that conform to water-level elevations.
+        **kwargs : dictionary
+            keyword arguments passed to matplotlib.pyplot.contour
+
+        Returns
+        -------
+        contour_set : matplotlib.pyplot.contour
+
+        """
+        if plt is None:
+            err_msg = (
+                "matplotlib must be installed to " + "use contour_array()"
+            )
+            raise ImportError(err_msg)
+        else:
+            import matplotlib.tri as tri
+
+        if not isinstance(a, np.ndarray):
+            a = np.array(a)
+
+        if a.ndim > 1:
+            a = np.ravel(a)
+
+        if "ax" in kwargs:
+            ax = kwargs.pop("ax")
+        else:
+            ax = self.ax
+
+        xcenters = self.xcenters
+        plotarray = np.array([a[cell] for cell in sorted(self.projpts)])
+
+        # todo: update for head array
+        if self.mg.nlay == 1:
+            zcenters = []
+            for ev in self.elev:
+                ev = ev.ravel()
+                zc = [ev[i] for i in sorted(self.projpts)]
+                zcenters.append(zc)
+
+            plotarray = np.vstack((plotarray, plotarray))
+            xcenters = np.vstack((xcenters, xcenters))
+            zcenters = np.array(zcenters)
+
+        else:
+            if isinstance(head, np.ndarray):
+                zcenters = self.set_zcentergrid(np.ravel(head))
+            else:
+                zcenters = np.array([
+                    np.mean(np.array(v).T[1])
+                    for i, v in sorted(self.projpts.items())
+                    ])
+
+        # work around for tri-contour ignore vmin & vmax
+        # necessary for the tri-contour NaN issue fix
+        if "levels" not in kwargs:
+            if "vmin" not in kwargs:
+                vmin = np.nanmin(plotarray)
+            else:
+                vmin = kwargs.pop("vmin")
+            if "vmax" not in kwargs:
+                vmax = np.nanmax(plotarray)
+            else:
+                vmax = kwargs.pop("vmax")
+
+            levels = np.linspace(vmin, vmax, 7)
+            # kwargs["levels"] = levels
+
+        # workaround for tri-contour nan issue
+        plotarray[np.isnan(plotarray)] = -(2 ** 31)
+        if masked_values is None:
+            masked_values = [-(2 ** 31)]
+        else:
+            masked_values = list(masked_values)
+            if -(2 ** 31) not in masked_values:
+                masked_values.append(-(2 ** 31))
+
+        ismasked = None
+        if masked_values is not None:
+            for mval in masked_values:
+                if ismasked is None:
+                    ismasked = np.isclose(plotarray, mval)
+                else:
+                    t = np.isclose(plotarray, mval)
+                    ismasked += t
+
+        plot_triplot = False
+        if "plot_triplot" in kwargs:
+            plot_triplot = kwargs.pop("plot_triplot")
+
+        if "extent" in kwargs:
+            extent = kwargs.pop("extent")
+
+            idx = (
+                (xcenters >= extent[0])
+                & (xcenters <= extent[1])
+                & (zcenters >= extent[2])
+                & (zcenters <= extent[3])
+            )
+            plotarray = plotarray[idx].flatten()
+            xcenters = xcenters[idx].flatten()
+            zcenters = zcenters[idx].flatten()
+
+        if self.mg.nlay == 1:
+            plotarray = np.ma.masked_array(plotarray, ismasked)
+            contour_set = ax.contour(xcenters, zcenters, plotarray, **kwargs)
+        else:
+            triang = tri.Triangulation(xcenters, zcenters)
+
+            if ismasked is not None:
+                ismasked = ismasked.flatten()
+                mask = np.any(
+                    np.where(ismasked[triang.triangles], True, False), axis=1
+                )
+                triang.set_mask(mask)
+
+            contour_set = ax.tricontour(triang, plotarray, **kwargs)
+            if plot_triplot:
+                ax.triplot(triang, color="black", marker="o", lw=0.75)
+
+        ax.set_xlim(self.extent[0], self.extent[1])
+        ax.set_ylim(self.extent[2], self.extent[3])
+
+        return contour_set
+
 
     def plot_inactive(self, ibound=None, color_noflow="black", **kwargs):
         """
@@ -454,7 +588,7 @@ class ZCrossSection(object):
         color = "grey"
         if "ec" in kwargs:
             color = kwargs.pop("ec")
-        if color in kwargs:
+        if "color" in kwargs:
             color = kwargs.pop("color")
 
         polygons = [p for _, p in sorted(self.polygons.items())]
@@ -535,6 +669,29 @@ class ZCrossSection(object):
                 projpts[nn + adjnn] = projt + projb
 
         return projpts
+
+    def set_zcentergrid(self, vs, kstep=1):
+        """
+        Get an array of z elevations at the center of a cell that is based
+        on minimum of cell top elevation (self.elev) or passed vs numpy.ndarray
+
+        Parameters
+        ----------
+        vs : numpy.ndarray
+            Three-dimensional array to plot.
+
+        Returns
+        -------
+        zcentergrid : numpy.ndarray
+
+        """
+        verts = self.set_zpts(vs)
+        zcenters = [
+            np.mean(np.array(v).T[1])
+            for i, v in sorted(verts.items())
+            if (i // self.mg.ncpl) % kstep == 0
+        ]
+        return zcenters
 
     def get_grid_patch_collection(self, plotarray, projpts=None, **kwargs):
         """
