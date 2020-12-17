@@ -297,6 +297,91 @@ class ZCrossSection(object):
 
         return pc
 
+    def plot_surface(self, a, masked_values=None, **kwargs):
+        """
+        Plot a two- or three-dimensional array as line(s).
+
+        Parameters
+        ----------
+        a : numpy.ndarray
+            Two- or three-dimensional array to plot.
+        masked_values : iterable of floats, ints
+            Values to mask.
+        **kwargs : dictionary
+            keyword arguments passed to matplotlib.pyplot.plot
+
+        Returns
+        -------
+        plot : list containing matplotlib.plot objects
+        """
+        if "ax" in kwargs:
+            ax = kwargs.pop("ax")
+        else:
+            ax = self.ax
+
+        if "color" in kwargs:
+            color = kwargs.pop("color")
+        elif "c" in kwargs:
+            color = kwargs.pop("c")
+        else:
+            color = "b"
+
+        if not isinstance(a, np.ndarray):
+            a = np.array(a)
+
+        if a.ndim > 1:
+            a = np.ravel(a)
+
+        if a.size % self.mg.ncpl != 0:
+            raise AssertionError("Array size must be a multiple of ncpl")
+
+        if masked_values is not None:
+            for mval in masked_values:
+                a = np.ma.masked_values(a, mval)
+
+        data = []
+        lay_data = []
+        d = []
+        lay_d = []
+        dim = self.mg.ncpl
+        for cell, verts in sorted(self.projpts.items()):
+            if cell >= a.size:
+                continue
+            elif np.isnan(a[cell]):
+                continue
+            elif a[cell] is np.ma.masked:
+                continue
+
+            if cell >= dim:
+                data.append(lay_data)
+                d.append(lay_d)
+                dim += self.mg.ncpl
+                lay_data = [(a[cell], a[cell])]
+                lay_d = [self.d[cell]]
+            else:
+                lay_data.append((a[cell], a[cell]))
+                lay_d.append(self.d[cell])
+
+        if lay_data:
+            data.append(lay_data)
+            d.append(lay_d)
+
+        data = np.array(data)
+        d = np.array(d)
+
+        plot = []
+        for k in range(data.shape[0]):
+            if ax is None:
+                ax = plt.gca()
+            for ix, _ in enumerate(data[k]):
+                ax.plot(d[k, ix], data[k, ix], color=color, **kwargs)
+
+            ax.set_xlim(self.extent[0], self.extent[1])
+            ax.set_ylim(self.extent[2], self.extent[3])
+            plot.append(ax)
+
+        return plot
+
     def contour_array(self, a, masked_values=None, head=None, **kwargs):
         """
         Contour a two-dimensional array.
@@ -443,7 +528,6 @@ class ZCrossSection(object):
 
         return contour_set
 
-
     def plot_inactive(self, ibound=None, color_noflow="black", **kwargs):
         """
         Make a plot of inactive cells.  If not specified, then pull ibound
@@ -570,6 +654,92 @@ class ZCrossSection(object):
             ax.set_ylim(self.extent[2], self.extent[3])
 
         return col
+
+    def plot_surface(self, a, masked_values=None, **kwargs):
+        """
+        Plot a two- or three-dimensional array as line(s).
+
+        Parameters
+        ----------
+        a : numpy.ndarray
+            Two- or three-dimensional array to plot.
+        masked_values : iterable of floats, ints
+            Values to mask.
+        **kwargs : dictionary
+            keyword arguments passed to matplotlib.pyplot.plot
+
+        Returns
+        -------
+        plot : list containing matplotlib.plot objects
+        """
+        if "ax" in kwargs:
+            ax = kwargs.pop("ax")
+        else:
+            ax = self.ax
+
+        if "color" in kwargs:
+            color = kwargs.pop("color")
+        elif "c" in kwargs:
+            color = kwargs.pop("c")
+        else:
+            color = "b"
+
+        if not isinstance(a, np.ndarray):
+            a = np.array(a)
+
+        if a.ndim > 1:
+            a = np.ravel(a)
+
+        if a.size % self.mg.ncpl != 0:
+            raise AssertionError("Array size must be a multiple of ncpl")
+
+        if masked_values is not None:
+            for mval in masked_values:
+                a = np.ma.masked_values(a, mval)
+
+        data = []
+        lay_data = []
+        d = []
+        lay_d = []
+        dim = self.mg.ncpl
+        for cell, verts in sorted(self.projpts.items()):
+
+            if cell >= a.size:
+                continue
+            elif np.isnan(a[cell]):
+                continue
+            elif a[cell] is np.ma.masked:
+                continue
+
+            if cell >= dim:
+                data.append(lay_data)
+                d.append(lay_d)
+                dim += self.mg.ncpl
+                lay_data = [(a[cell], a[cell])]
+                lay_d = [self.d[cell]]
+            else:
+                lay_data.append((a[cell], a[cell]))
+                lay_d.append(self.d[cell])
+
+        if lay_data:
+            data.append(lay_data)
+            d.append(lay_d)
+
+        data = np.array(data)
+        d = np.array(d)
+
+        plot = []
+        for k in range(data.shape[0]):
+            if ax is None:
+                ax = plt.gca()
+            for ix, _ in enumerate(data[k]):
+                ax.plot(d[k, ix], data[k, ix], color=color, **kwargs)
+
+            ax.set_xlim(self.extent[0], self.extent[1])
+            ax.set_ylim(self.extent[2], self.extent[3])
+            plot.append(ax)
+
+        return plot
 
     def get_grid_line_collection(self, **kwargs):
         """
