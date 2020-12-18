@@ -155,7 +155,6 @@ class ZCrossSection(object):
 
             self.xypts = xypts
 
-
         top = self.mg.top.reshape(1, self.mg.ncpl)
         botm = self.mg.botm.reshape(self.mg.nlay, self.mg.ncpl)
 
@@ -164,6 +163,22 @@ class ZCrossSection(object):
         self.idomain = self.mg.idomain
         if self.mg.idomain is None:
             self.idomain = np.ones(botm.shape, dtype=int)
+
+        ncb = 0
+        laycbd = []
+        if self.model is not None:
+            if self.model.laycbd is not None:
+                laycbd = self.model.laycbd
+
+        if laycbd:
+            self.active = []
+            for k in range(self.mg.nlay):
+                self.active.append(1)
+                if laycbd[k] > 0:
+                    self.active.append(0)
+            self.active = np.array(self.active, dtype=int)
+        else:
+            self.active = np.ones(self.mg.nlay, dtype=int)
 
         # choose a projection direction based on maximum information
         xpts = []
@@ -190,7 +205,6 @@ class ZCrossSection(object):
         self.layer0 = None
         self.layer1 = None
 
-        # todo: might be able to remove this at some point...
         self.d = {
             i: (np.min(np.array(v).T[0]), np.max(np.array(v).T[0]))
             for i, v in sorted(self.projpts.items())
@@ -200,6 +214,13 @@ class ZCrossSection(object):
         self.xcenters = [
             np.mean(np.array(v).T[0]) for i, v in sorted(self.projpts.items())
         ]
+
+        self.mean_dx = np.mean(
+            np.max(self.xvertices, axis=1) - np.min(self.xvertices, axis=1)
+        )
+        self.mean_dy = np.mean(
+            np.max(self.yvertices, axis=1) - np.min(self.yvertices, axis=1)
+        )
 
         self._polygons = {}
 
@@ -655,91 +676,550 @@ class ZCrossSection(object):
 
         return col
 
-    def plot_surface(self, a, masked_values=None, **kwargs):
+    def plot_bc(
+        self, name=None, package=None, kper=0, color=None, head=None, **kwargs
+    ):
         """
-        Plot a two- or three-dimensional array as line(s).
+        Plot boundary conditions locations for a specific boundary
+        type from a flopy model
 
         Parameters
         ----------
-        a : numpy.ndarray
-            Two- or three-dimensional array to plot.
-        masked_values : iterable of floats, ints
-            Values to mask.
+        name : string
+            Package name string ('WEL', 'GHB', etc.). (Default is None)
+        package : flopy.modflow.Modflow package class instance
+            flopy package class instance. (Default is None)
+        kper : int
+            Stress period to plot
+        color : string
+            matplotlib color string. (Default is None)
+        head : numpy.ndarray
+            Three-dimensional array (structured grid) or
+            Two-dimensional array (vertex grid)
+            to set top of patches to the minimum of the top of a\
+            layer or the head value. Used to create
+            patches that conform to water-level elevations.
         **kwargs : dictionary
-            keyword arguments passed to matplotlib.pyplot.plot
+            keyword arguments passed to matplotlib.collections.PatchCollection
 
         Returns
         -------
-        plot : list containing matplotlib.plot objects
+        patches : matplotlib.collections.PatchCollection
+
         """
+        if "ftype" in kwargs and name is None:
+            name = kwargs.pop("ftype")
+
+        # Find package to plot
+        if package is not None:
+            p = package
+        elif self.model is not None:
+            if name is None:
+                raise Exception("ftype not specified")
+            name = name.upper()
+            p = self.model.get_package(name)
+        else:
+            raise Exception("Cannot find package to plot")
+
+        # trap for mf6 'cellid' vs mf2005 'k', 'i', 'j' convention
+        if isinstance(p, list) or p.parent.version == "mf6":
+            if not isinstance(p, list):
+                p = [p]
+
+            idx = np.array([])
+            for pp in p:
+                if pp.package_type in ("lak", "sfr", "maw", "uzf"):
+                    t = plotutil.advanced_package_bc_helper(pp, self.mg, kper)
+                else:
+                    try:
+                        mflist = pp.stress_period_data.array[kper]
+                    except Exception as e:
+                        raise Exception(
+                            "Not a list-style boundary package: " + str(e)
+                        )
+                    if mflist is None:
+                        return
+
+                    t = np.array(
+                        [list(i) for i in mflist["cellid"]], dtype=int
+                    ).T
+
+                if len(idx) == 0:
+                    idx = np.copy(t)
+                else:
+                    idx = np.append(idx, t, axis=1)
+
+        else:
+            # modflow-2005 structured and unstructured grid
+            if p.package_type in ("uzf", "lak"):
+                idx = plotutil.advanced_package_bc_helper(p, self.mg, kper)
+            else:
+                try:
+                    mflist = p.stress_period_data[kper]
+                except Exception as e:
+                    raise Exception(
+                        "Not a list-style boundary package: " + str(e)
+                    )
+                if mflist is None:
+                    return
+                if len(self.mg.shape) == 3:
+                    idx = [mflist["k"], mflist["i"], mflist["j"]]
+                else:
+                    idx = mflist["node"]
+
+        # Plot the list locations, change this to self.mg.shape
+        if len(self.mg.shape) != 3:
+            plotarray = np.zeros((self.mg.nlay, self.mg.ncpl), dtype=np.int)
+            plotarray[tuple(idx)] = 1
+        else:
+            plotarray = np.zeros(
+                (self.mg.nlay, self.mg.nrow, self.mg.ncol), dtype=np.int
+            )
+            plotarray[idx[0], idx[1], idx[2]] = 1
+
+        plotarray = np.ma.masked_equal(plotarray, 0)
+        if color is None:
+            key = name[:3].upper()
+            if key in plotutil.bc_color_dict:
+                c = plotutil.bc_color_dict[key]
+            else:
+                c = plotutil.bc_color_dict["default"]
+        else:
+            c = color
+        cmap = matplotlib.colors.ListedColormap(["none", c])
+        bounds = [0, 1, 2]
+        norm = matplotlib.colors.BoundaryNorm(bounds, cmap.N)
+        patches = self.plot_array(
+            plotarray,
+            masked_values=[0],
+            head=head,
+            cmap=cmap,
+            norm=norm,
+            **kwargs
+        )
+
+        return patches
+
+    def plot_vector(
+        self,
+        vx,
+        vy,
+        vz,
+        head=None,
+        kstep=1,
+        hstep=1,
+        normalize=False,
+        masked_values=None,
+        **kwargs
+    ):
+        """
+        Plot a vector.
+
+        Parameters
+        ----------
+        vx : np.ndarray
+            x component of the vector to be plotted (non-rotated)
+            array shape must be (nlay, nrow, ncol) for a structured grid
+            array shape must be (nlay, ncpl) for a unstructured grid
+        vy : np.ndarray
+            y component of the vector to be plotted (non-rotated)
+            array shape must be (nlay, nrow, ncol) for a structured grid
+            array shape must be (nlay, ncpl) for a unstructured grid
+        vz : np.ndarray
+            y component of the vector to be plotted (non-rotated)
+            array shape must be (nlay, nrow, ncol) for a structured grid
+            array shape must be (nlay, ncpl) for a unstructured grid
+        head : numpy.ndarray
+            MODFLOW's head array.  If not provided, then the quivers will be
+            plotted in the cell center.
+        kstep : int
+            layer frequency to plot (default is 1)
+        hstep : int
+            horizontal frequency to plot (default is 1)
+        normalize : bool
+            boolean flag used to determine if vectors should be normalized
+            using the vector magnitude in each cell (default is False)
+        masked_values : iterable of floats
+            values to mask
+        kwargs : matplotlib.pyplot keyword arguments for the
+            plt.quiver method
+
+        Returns
+        -------
+        quiver : matplotlib.pyplot.quiver
+            result of the quiver function
+
+        """
+        if "pivot" in kwargs:
+            pivot = kwargs.pop("pivot")
+        else:
+            pivot = "middle"
+
         if "ax" in kwargs:
             ax = kwargs.pop("ax")
         else:
             ax = self.ax
 
-        if "color" in kwargs:
-            color = kwargs.pop("color")
-        elif "c" in kwargs:
-            color = kwargs.pop("c")
+        # Check that the cross section is not arbitrary with a tolerance
+        # of the mean cell size in each direction
+        arbitrary = False
+        pts = self.pts
+        xuniform = [
+            True if abs(pts.T[0, 0] - i) < self.mean_dy
+            else False for i in pts.T[0]
+        ]
+        yuniform = [
+            True if abs(pts.T[1, 0] - i) < self.mean_dx
+            else False for i in pts.T[1]
+        ]
+        if not np.all(xuniform) and not np.all(yuniform):
+            arbitrary = True
+        if arbitrary:
+            err_msg = (
+                "plot_specific_discharge() does not "
+                "support arbitrary cross-sections"
+            )
+            raise AssertionError(err_msg)
+
+        # get the actual values to plot
+        if self.direction == "x":
+            u_tmp = vx
+        elif self.direction == "y":
+            u_tmp = vy  # -1.0 * vy
+
+        v_tmp = vz
+
+        # kstep implementation for vertex grid
+        projpts = {
+            key: value
+            for key, value in self.projpts.items()
+            if (key // self.mg.ncpl) % kstep == 0
+        }
+
+        # set x and z centers
+        if isinstance(head, np.ndarray):
+            # pipe kstep to set_zcentergrid to assure consistent array size
+            zcenters = self.set_zcentergrid(np.ravel(head), kstep=kstep)
         else:
-            color = "b"
+            zcenters = [
+                np.mean(np.array(v).T[1])
+                for i, v in sorted(projpts.items())
+            ]
 
-        if not isinstance(a, np.ndarray):
-            a = np.array(a)
+        x = self.xcenters
+        z = np.ravel(zcenters)
 
-        if a.ndim > 1:
-            a = np.ravel(a)
+        u = np.array([u_tmp.ravel()[cell] for cell in sorted(projpts)])
+        v = np.array([v_tmp.ravel()[cell] for cell in sorted(projpts)])
 
-        if a.size % self.mg.ncpl != 0:
-            raise AssertionError("Array size must be a multiple of ncpl")
+        x = x[::hstep]
+        z = z[::hstep]
+        u = u[::hstep]
+        v = v[::hstep]
 
+        # mask values
         if masked_values is not None:
             for mval in masked_values:
-                a = np.ma.masked_values(a, mval)
+                to_mask = np.logical_or(u == mval, v == mval)
+                u[to_mask] = np.nan
+                v[to_mask] = np.nan
 
-        data = []
-        lay_data = []
-        d = []
-        lay_d = []
-        dim = self.mg.ncpl
-        for cell, verts in sorted(self.projpts.items()):
+        # normalize
+        if normalize:
+            vmag = np.sqrt(u ** 2.0 + v ** 2.0)
+            idx = vmag > 0.0
+            u[idx] /= vmag[idx]
+            v[idx] /= vmag[idx]
 
-            if cell >= a.size:
-                continue
-            elif np.isnan(a[cell]):
-                continue
-            elif a[cell] is np.ma.masked:
-                continue
+        # plot with quiver
+        quiver = ax.quiver(x, z, u, v, pivot=pivot, **kwargs)
 
-            if cell >= dim:
-                data.append(lay_data)
-                d.append(lay_d)
-                dim += self.mg.ncpl
-                lay_data = [(a[cell], a[cell])]
-                lay_d = [self.d[cell]]
-            else:
-                lay_data.append((a[cell], a[cell]))
-                lay_d.append(self.d[cell])
+        return quiver
 
-        if lay_data:
-            data.append(lay_data)
-            d.append(lay_d)
+    def plot_specific_discharge(
+        self, spdis, head=None, kstep=1, hstep=1, normalize=False, **kwargs
+    ):
+        """
+        DEPRECATED. Use plot_vector() instead, which should follow after
+        postprocessing.get_specific_discharge().
 
-        data = np.array(data)
-        d = np.array(d)
+        Use quiver to plot vectors.
 
-        plot = []
-        for k in range(data.shape[0]):
-            if ax is None:
-                ax = plt.gca()
-            for ix, _ in enumerate(data[k]):
-                ax.plot(d[k, ix], data[k, ix], color=color, **kwargs)
+        Parameters
+        ----------
+        spdis : np.recarray
+            numpy recarray of specific discharge information. This
+            can be grabbed directly from the CBC file if
+            SAVE_SPECIFIC_DISCHARGE is used in the MF6 NPF file.
+        head : numpy.ndarray
+            MODFLOW's head array. If not provided, then the quivers will be
+             plotted in the cell center.
+        kstep : int
+            layer frequency to plot. (Default is 1.)
+        hstep : int
+            horizontal frequency to plot. (Default is 1.)
+        normalize : bool
+            boolean flag used to determine if discharge vectors should
+            be normalized using the magnitude of the specific discharge in each
+            cell. (default is False)
+        kwargs : dictionary
+            Keyword arguments passed to plt.quiver()
 
-            ax.set_xlim(self.extent[0], self.extent[1])
-            ax.set_ylim(self.extent[2], self.extent[3])
-            plot.append(ax)
+        Returns
+        -------
+        quiver : matplotlib.pyplot.quiver
+            Vectors
 
-        return plot
+        """
+        import warnings
+
+        warnings.warn(
+            "plot_specific_discharge() has been deprecated. Use "
+            "plot_vector() instead, which should follow after "
+            "postprocessing.get_specific_discharge()",
+            DeprecationWarning,
+        )
+
+        if "pivot" in kwargs:
+            pivot = kwargs.pop("pivot")
+        else:
+            pivot = "middle"
+
+        if "ax" in kwargs:
+            ax = kwargs.pop("ax")
+        else:
+            ax = self.ax
+
+        arbitrary = False
+        pts = self.pts
+        xuniform = [
+            True if abs(pts.T[0, 0] - i) < self.mean_dy
+            else False for i in pts.T[0]
+        ]
+        yuniform = [
+            True if abs(pts.T[1, 0] - i) < self.mean_dx
+            else False for i in pts.T[1]
+        ]
+        if not np.all(xuniform) and not np.all(yuniform):
+            arbitrary = True
+        if arbitrary:
+            err_msg = (
+                "plot_specific_discharge() does not "
+                "support arbitrary cross-sections"
+            )
+            raise AssertionError(err_msg)
+
+        if isinstance(spdis, list):
+            print(
+                "Warning: Selecting the final stress period from Specific"
+                " Discharge list"
+            )
+            spdis = spdis[-1]
+
+        ncpl = self.mg.ncpl
+        nlay = self.mg.nlay
+
+        qx = np.zeros((nlay * ncpl))
+        qz = np.zeros((nlay * ncpl))
+        ib = np.zeros((nlay * ncpl), dtype=bool)
+
+        idx = np.array(spdis["node"]) - 1
+
+        if self.direction == "x":
+            qx[idx] = spdis["qx"]
+        elif self.direction == "y":
+            qx[idx] = spdis["qy"]  # * -1
+        else:
+            err_msg = (
+                "plot_specific_discharge does not "
+                "support arbitrary cross-sections"
+            )
+            raise AssertionError(err_msg)
+
+        qz[idx] = spdis["qz"]
+        ib[idx] = True
+
+        # kstep implementation for vertex grid
+        projpts = {
+            key: value
+            for key, value in self.projpts.items()
+            if (key // ncpl) % kstep == 0
+        }
+
+        # set x and z centers
+        if isinstance(head, np.ndarray):
+            # pipe kstep to set_zcentergrid to assure consistent array size
+            zcenters = self.set_zcentergrid(np.ravel(head), kstep=kstep)
+        else:
+            zcenters = [
+                np.mean(np.array(v).T[1])
+                for i, v in sorted(projpts.items())
+            ]
+
+        x = self.xcenters
+        z = np.ravel(zcenters)
+        u = np.array([qx[cell] for cell in sorted(projpts)])
+        v = np.array([qz[cell] for cell in sorted(projpts)])
+
+        ib = np.array([ib[cell] for cell in sorted(projpts)])
+
+        x = x[::hstep]
+        z = z[::hstep]
+        u = u[::hstep]
+        v = v[::hstep]
+        ib = ib[::hstep]
+
+        if normalize:
+            vmag = np.sqrt(u ** 2.0 + v ** 2.0)
+            idx = vmag > 0.0
+            u[idx] /= vmag[idx]
+            v[idx] /= vmag[idx]
+
+        # mask with an ibound array
+        u[~ib] = np.nan
+        v[~ib] = np.nan
+
+        quiver = ax.quiver(x, z, u, v, pivot=pivot, **kwargs)
+
+        return quiver
+
+    def plot_discharge(
+        self,
+        frf,
+        fff,
+        flf=None,
+        head=None,
+        kstep=1,
+        hstep=1,
+        normalize=False,
+        **kwargs
+    ):
+        """
+        DEPRECATED. Use plot_vector() instead, which should follow after
+        postprocessing.get_specific_discharge().
+
+        Use quiver to plot vectors.
+
+        Parameters
+        ----------
+        frf : numpy.ndarray
+            MODFLOW's 'flow right face'
+        fff : numpy.ndarray
+            MODFLOW's 'flow front face'
+        flf : numpy.ndarray
+            MODFLOW's 'flow lower face' (Default is None.)
+        head : numpy.ndarray
+            MODFLOW's head array.  If not provided, then will assume confined
+            conditions in order to calculated saturated thickness.
+        kstep : int
+            layer frequency to plot. (Default is 1.)
+        hstep : int
+            horizontal frequency to plot. (Default is 1.)
+        normalize : bool
+            boolean flag used to determine if discharge vectors should
+            be normalized using the magnitude of the specific discharge in each
+            cell. (default is False)
+        kwargs : dictionary
+            Keyword arguments passed to plt.quiver()
+
+        Returns
+        -------
+        quiver : matplotlib.pyplot.quiver
+            Vectors
+
+        """
+        import warnings
+
+        warnings.warn(
+            "plot_discharge() has been deprecated. Use "
+            "plot_vector() instead, which should follow after "
+            "postprocessing.get_specific_discharge()",
+            DeprecationWarning,
+        )
+
+        if self.mg.grid_type != "structured":
+            err_msg = "Use plot_specific_discharge for " "{} grids".format(
+                self.mg.grid_type
+            )
+            raise NotImplementedError(err_msg)
+
+        else:
+            ib = np.ones((self.mg.nlay, self.mg.nrow, self.mg.ncol))
+            if self.mg.idomain is not None:
+                ib = self.mg.idomain
+
+            delr = self.mg.delr
+            delc = self.mg.delc
+            top = self.mg.top
+            botm = self.mg.botm
+            if not np.all(self.active == 1):
+                botm = botm[self.active == 1]
+            nlay = botm.shape[0]
+            laytyp = None
+            hnoflo = 999.0
+            hdry = 999.0
+
+            if self.model is not None:
+                if self.model.laytyp is not None:
+                    laytyp = self.model.laytyp
+
+                if self.model.hnoflo is not None:
+                    hnoflo = self.model.hnoflo
+
+                if self.model.hdry is not None:
+                    hdry = self.model.hdry
+
+            # If no access to head or laytyp, then calculate confined saturated
+            # thickness by setting laytyp to zeros
+            if head is None or laytyp is None:
+                head = np.zeros(botm.shape, np.float32)
+                laytyp = np.zeros((nlay), dtype=np.int)
+                head[0, :, :] = top
+                if nlay > 1:
+                    head[1:, :, :] = botm[:-1, :, :]
+
+            sat_thk = plotutil.PlotUtilities.saturated_thickness(
+                head, top, botm, laytyp, [hnoflo, hdry]
+            )
+
+            # Calculate specific discharge
+            qx, qy, qz = plotutil.PlotUtilities.centered_specific_discharge(
+                frf, fff, flf, delr, delc, sat_thk
+            )
+
+            if qz is None:
+                qz = np.zeros((qx.shape), dtype=np.float)
+
+            ib = ib.ravel()
+            qx = qx.ravel()
+            qy = qy.ravel() * -1
+            qz = qz.ravel()
+
+            temp = []
+            for ix, val in enumerate(ib):
+                if val != 0:
+                    temp.append((ix + 1, qx[ix], -qy[ix], qz[ix]))
+
+            spdis = np.recarray(
+                (len(temp),),
+                dtype=[
+                    ("node", np.int),
+                    ("qx", np.float),
+                    ("qy", np.float),
+                    ("qz", np.float),
+                ],
+            )
+            for ix, tup in enumerate(temp):
+                spdis[ix] = tup
+
+            self.plot_specific_discharge(
+                spdis,
+                head=head,
+                kstep=kstep,
+                hstep=hstep,
+                normalize=normalize,
+                **kwargs
+            )
 
     def get_grid_line_collection(self, **kwargs):
         """
