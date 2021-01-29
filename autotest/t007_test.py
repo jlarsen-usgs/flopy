@@ -1206,7 +1206,7 @@ def test_mapview_plot_bc():
         raise AssertionError("Boundary condition was not drawn")
 
     for col in ax.collections:
-        if not isinstance(col, QuadMesh):
+        if not isinstance(col, PatchCollection):
             raise AssertionError("Unexpected collection type")
     plt.close()
 
@@ -1231,7 +1231,7 @@ def test_mapview_plot_bc():
         raise AssertionError("Boundary condition was not drawn")
 
     for col in ax.collections:
-        if not isinstance(col, QuadMesh):
+        if not isinstance(col, PatchCollection):
             raise AssertionError("Unexpected collection type")
     plt.close()
 
@@ -1249,7 +1249,7 @@ def test_mapview_plot_bc():
         raise AssertionError("Boundary condition was not drawn")
 
     for col in ax.collections:
-        if not isinstance(col, QuadMesh):
+        if not isinstance(col, PatchCollection):
             raise AssertionError("Unexpected collection type")
     plt.close()
 
