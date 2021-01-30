@@ -336,37 +336,6 @@ class Raster(object):
 
         return arr_dict[band]
 
-    def resample_to_polygons(self, polygons, band, method='mean'):
-        """
-        Method to resample the raster data to a user supplied
-        sequence of polygons
-
-
-        Parameters
-        ----------
-        polygons :
-        band : int
-            raster band to re-sample
-        method : str or None
-            interpolation method options
-            None returns all raster values for each polygon
-
-            "mean" for mean raster value in polygon
-            "median" for median raster value in polygon
-
-            scipy interpolation method options use the polygon's cell
-            center
-
-            "linear" for bi-linear interpolation
-            "nearest" for nearest neighbor
-            "cubic" for bi-cubic interpolation
-
-        Returns
-        -------
-            np.array
-        """
-        return
-
     def resample_to_grid(self, xc, yc, band, method="nearest"):
         """
         Method to resample the raster data to a
@@ -394,6 +363,8 @@ class Raster(object):
         -------
             np.array
         """
+        # todo: update for xv and yv instead of xc and yc. This will allow for
+        #   resampling by median, mean, or modal statistical values.
         if scipy is None:
             print(
                 "Raster().resample_to_grid(): error "
