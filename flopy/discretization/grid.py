@@ -437,11 +437,11 @@ class Grid(object):
         if not np.isscalar(x):
             x, y = x.copy(), y.copy()
 
-        x, y = geometry.rotate(
-            x, y, self._xoff, self._yoff, -self.angrot_radians
+        x, y = geometry.transform(
+            x, y, self._xoff, self._yoff, self.angrot_radians, inverse=True
         )
-        x -= self._xoff
-        y -= self._yoff
+        # x -= self._xoff
+        # y -= self._yoff
 
         return x, y
 

@@ -104,12 +104,14 @@ class ZCrossSection(object):
             eps = 1.0e-4
             xedge, yedge = self.mg.xyedges
             if onkey == 'row':
+                self.direction = 'x'
                 ycenter = ycellcenters.T[0]
                 pts = [
                     (xedge[0] - eps, ycenter[int(line[onkey])]),
                     (xedge[-1] + eps, ycenter[int(line[onkey])]),
                 ]
             else:
+                self.direction = "y"
                 xcenter = xcellcenters[0, :]
                 pts = [
                     (xcenter[int(line[onkey])], yedge[0] + eps),
@@ -124,6 +126,22 @@ class ZCrossSection(object):
                 yp.append(v2)
 
             xp, yp = self.mg.get_local_coords(xp, yp)
+            if np.max(xp) - np.min(xp) > np.max(yp) - np.min(yp):
+                # this is x-projection and we should buffer x by small amount
+                idx0 = list(xp).index(np.max(xp))
+                idx1 = list(xp).index(np.min(xp))
+                xp[idx0] += 1e-04
+                xp[idx1] -= 1e-04
+                self.direction = "x"
+
+            else:
+                # this is y-projection and we should buffer y by small amount
+                idx0 = list(yp).index(np.max(yp))
+                idx1 = list(yp).index(np.min(yp))
+                yp[idx0] += 1e-04
+                yp[idx1] -= 1e-04
+                self.direction = "y"
+
             pts = [(xt, yt) for xt, yt in zip(xp, yp)]
 
         self.pts = np.array(pts)
@@ -188,10 +206,11 @@ class ZCrossSection(object):
                 xpts.append(v[0])
                 ypts.append(v[1])
 
-        if np.max(xpts) - np.min(xpts) > np.max(ypts) - np.min(ypts):
-            self.direction = "x"
-        else:
-            self.direction = "y"
+        # todo: remove this once the buffering code is done...
+        # if np.max(xpts) - np.min(xpts) > np.max(ypts) - np.min(ypts):
+        #     self.direction = "x"
+        # else:
+        #     self.direction = "y"
 
         # make vertex array based on projection direction
         self.projpts = self.set_zpts(None)
@@ -239,11 +258,32 @@ class ZCrossSection(object):
             dict : [matplotlib.patches.Polygon]
         """
         if not self._polygons:
-            for cell, verts in self.projpts.items():
-                verts = \
-                    plotutil.UnstructuredPlotUtilities.arctan2(np.array(verts))
+            for cell, poly in self.projpts.items():
+                if len(poly) > 4:
+                    # this is the rare multipolygon instance...
+                    n = 0
+                    p = []
+                    polys = []
+                    for vn, v in enumerate(poly):
+                        if vn == 3 + 4 * n:
+                            n += 1
+                            p.append(v)
+                            polys.append(p)
+                            p = []
+                        else:
+                            p.append(v)
+                else:
+                    polys = [poly]
 
-                self._polygons[cell] = Polygon(verts, closed=True)
+                for poly in polys:
+                    verts = \
+                        plotutil.UnstructuredPlotUtilities.arctan2(np.array(poly))
+
+                    if cell not in self._polygons:
+                        self._polygons[cell] = [Polygon(verts, closed=True)]
+                    else:
+                        self._polygons[cell].append(Polygon(verts,
+                                                            closed=True))
 
         return copy.copy(self._polygons)
 
@@ -1212,7 +1252,7 @@ class ZCrossSection(object):
             for ix, tup in enumerate(temp):
                 spdis[ix] = tup
 
-            self.plot_specific_discharge(
+            return self.plot_specific_discharge(
                 spdis,
                 head=head,
                 kstep=kstep,
@@ -1250,7 +1290,9 @@ class ZCrossSection(object):
         if "color" in kwargs:
             color = kwargs.pop("color")
 
-        polygons = [p for _, p in sorted(self.polygons.items())]
+        polygons = [
+            p for _, polys in sorted(self.polygons.items()) for p in polys
+        ]
         if len(polygons) > 0:
             patches = PatchCollection(
                 polygons, edgecolor=color, facecolor="none", **kwargs
@@ -1317,6 +1359,11 @@ class ZCrossSection(object):
                         projb = [(v[1], b) for v in verts]
                 else:
                     verts = np.array(verts).T
+                    # todo: this is an interesting problem. How do we handle
+                    #   the disconnected multipolygon issue? Maybe geographic
+                    #   coords is the default until we figure this out....
+                    #   or we "precalc the value with a secondary loop"....
+                    #   and set the inner polygon. Then exclude later....
                     a2 = (np.max(verts[0]) - np.min(verts[0])) ** 2
                     b2 = (np.max(verts[1]) - np.min(verts[1])) ** 2
                     c = np.sqrt(a2 + b2)
@@ -1325,7 +1372,22 @@ class ZCrossSection(object):
                     projb = [(d0, b), (d1, b)]
                     d0 += c
 
-                projpts[nn + adjnn] = projt + projb
+                if len(projt) == 2:
+                    projpt = projt + projb
+
+                else:
+                    # trap for rare, but possible multipolygon cases
+                    projpt = []
+                    i0 = 0
+                    i1 = 2
+                    for ix in range(len(projt)):
+                        if ix == i1 - 1:
+                            projpt += projt[i0:i1]
+                            projpt += projb[i0:i1]
+                            i0 += 2
+                            i1 += 2
+
+                projpts[nn + adjnn] = projpt
 
         return projpts
 
@@ -1397,21 +1459,42 @@ class ZCrossSection(object):
 
         rectcol = []
         data = []
+        # todo: need more updates for interacting with the caching routine....
         for cell, poly in sorted(projpts.items()):
             if not use_cache:
-                poly = \
-                    plotutil.UnstructuredPlotUtilities.arctan2(np.array(poly))
-
-            if np.isnan(plotarray[cell]):
-                continue
-            elif plotarray[cell] is np.ma.masked:
-                continue
-
-            if use_cache:
-                rectcol.append(poly)
+                if len(poly) > 4:
+                    # multipolygon instance...
+                    n = 0
+                    p = []
+                    polys = []
+                    for vn, v in enumerate(poly):
+                        if vn == 3 + 4 * n:
+                            n += 1
+                            p.append(v)
+                            polys.append(p)
+                            p = []
+                        else:
+                            p.append(v)
+                else:
+                    polys = [poly]
             else:
-                rectcol.append(Polygon(poly, closed=True))
-            data.append(plotarray[cell])
+                polys = poly
+
+            for poly in polys:
+                if not use_cache:
+                    poly = \
+                        plotutil.UnstructuredPlotUtilities.arctan2(np.array(poly))
+
+                if np.isnan(plotarray[cell]):
+                    continue
+                elif plotarray[cell] is np.ma.masked:
+                    continue
+
+                if use_cache:
+                    rectcol.append(poly)
+                else:
+                    rectcol.append(Polygon(poly, closed=True))
+                data.append(plotarray[cell])
 
         if len(rectcol) > 0:
             patches = PatchCollection(rectcol, **kwargs)

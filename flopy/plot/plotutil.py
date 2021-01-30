@@ -1731,13 +1731,13 @@ class UnstructuredPlotUtilities(object):
                     # only cycle through the cells that intersect
                     # the infinite line
                     cvert_ix = []
-                    for ix in range(len(cpv)):
-                        if cpv[ix - 1] < 0 and cpv[ix] > 0:
-                            cvert_ix.append(ix - 1)
-                        elif cpv[ix - 1] > 0 and cpv[ix] < 0:
-                            cvert_ix.append(ix - 1)
-                        elif cpv[ix - 1] == 0 and cpv[ix] == 0:
-                            cvert_ix += [ix - 1, ix]
+                    for vx in range(len(cpv)):
+                        if cpv[vx - 1] < 0 and cpv[vx] > 0:
+                            cvert_ix.append(vx - 1)
+                        elif cpv[vx - 1] > 0 and cpv[vx] < 0:
+                            cvert_ix.append(vx - 1)
+                        elif cpv[vx - 1] == 0 and cpv[vx] == 0:
+                            cvert_ix += [vx - 1, vx]
                         else:
                             pass
 
@@ -1758,13 +1758,13 @@ class UnstructuredPlotUtilities(object):
             x = x1 + ua * (x2 - x1)
             y = y1 + ua * (y2 - y1)
 
-            for ix, cell in enumerate(cells):
+            for iix, cell in enumerate(cells):
                 xc = x[cell]
                 yc = y[cell]
                 verts = [
                     (xt, yt)
                     for xt, yt in zip(
-                        xc[cell_vertex_ix[ix]], yc[cell_vertex_ix[ix]]
+                        xc[cell_vertex_ix[iix]], yc[cell_vertex_ix[iix]]
                     )
                 ]
 
