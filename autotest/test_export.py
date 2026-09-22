@@ -1022,7 +1022,7 @@ def test_to_geodataframe_incomplete_stress_period_data():
     np.testing.assert_allclose(
         recharge,
         gdf["rcha_recharge_1"].values,
-        err_msg="GeoDataFrame recharge does not match recharge values from package",
+        err_msg="GeoDataFrame does not match recharge values from package",
     )
 
     wel_data = wel.stress_period_data.to_array(kper=0, mask=True)["q"].ravel()
@@ -1030,7 +1030,7 @@ def test_to_geodataframe_incomplete_stress_period_data():
     np.testing.assert_allclose(
         wel_data,
         gdf["wel_q_0_1"].values,
-        err_msg="GeoDataFrame pumping does not match pumping values from wel package",
+        err_msg="GeoDataFrame does not match pumping values from wel package",
     )
 
     gdf = gwf.to_geodataframe(kper=1)
@@ -1038,13 +1038,13 @@ def test_to_geodataframe_incomplete_stress_period_data():
     np.testing.assert_allclose(
         recharge,
         gdf["rcha_recharge_1"].values,
-        err_msg="GeoDataFrame recharge from gwf does not match recharge values from package",
+        err_msg="GeoDataFrame from gwf does not match recharge values from package",
     )
 
     np.testing.assert_allclose(
         wel_data,
         gdf["wel_q_0_1"].values,
-        err_msg="GeoDataFrame pumping from gwf does not match pumping values from wel package",
+        err_msg="GeoDataFrame from gwf does not match pumping values from wel package",
     )
 
 
