@@ -843,7 +843,7 @@ class Raster:
         rasterio = import_optional_dependency("rasterio")
 
         if not str(name).endswith(".tif"):
-            name = Path(f"{name}.tif")
+            name = Path(f"{name!s}.tif")
 
         with rasterio.open(name, "w", **self._meta) as foo:
             for band, arr in self.__arr_dict.items():

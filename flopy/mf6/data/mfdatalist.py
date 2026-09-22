@@ -1699,7 +1699,12 @@ class MFTransientList(MFList, mfdata.MFTransient, DataListInterface):
 
             data = self.to_array(kper=kper, mask=True)
             if data is None:
-                return gdf
+                # get data from the last stress period where data was specified
+                per_with_data = np.array([i for i, v in self.data.items() if v is not None])
+                per_with_data = per_with_data[per_with_data < kper]
+                if len(per_with_data) == 0:
+                    return gdf
+                data = self.to_array(kper=per_with_data[-1], mask=True)
 
             col_names = []
             for name, array3d in data.items():
