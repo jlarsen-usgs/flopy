@@ -1968,6 +1968,9 @@ class MFPandasTransientList(MFPandasList, mfdata.MFTransient, DataListInterface)
             if gdf is None:
                 gdf = modelgrid.to_geodataframe()
 
+            if self.data is None:
+                return gdf
+
             data = self.to_array(kper=kper, mask=True)
             if data is None:
                 # get data from the last stress period where data was specified
